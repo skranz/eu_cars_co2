@@ -29,6 +29,21 @@ run = function() {
   
   # Create groups.csv to match firms with groups
   make.groups()
+  
+  dat = fst::read_fst("cars.fst")
+  if (!"group" %in% colnames(dat)) {
+    groups.df = readr::read_csv("groups.csv")
+    library(dplyrExtras)
+    dat = left_join(dat, groups.df, by="firm") %>%
+      mutate_rows(is.na(group), group=firm)
+  }
+  dat = dat %>%
+    select(-mp, -man, -mh, -mms,-red_wltp) %>%
+    rename(country=ms, pool=group, reduction_nedc=red_nedc)
+  dat = dat %>%
+    select(year, pool, firm, country, cn,ft,q, everything())
+
+  dat = fst::write_fst(dat,"cars2.fst", compress = 50)  
 }
 
 
@@ -110,6 +125,7 @@ make_firm_names = function() {
 
   ignore.names = c("aa-iva","aa-nss","aa_iva","aa_nss","duplicate", "unknown","", "out of scope", "n/a","ds","nd","unknwon", "api","amf","amz","bmb","binz","abarth","bautex","capron","carpol","dangel","germaz","humber","pilote","porche","bavaria","laverda","lincoln","maybach","plymouth","amz-kutno","auto-form","mercury","corvette","trans-poz","cita seconda","poclain vehicules","kivi","buick","bierman","binz","mprojekt","dethleffs","tripod","zeszuta","dodge","zimny","automobiles dangel","lancia","chevrolet","smart","lexus","mini","benye","binz & co kg","jlr ltd uk","8","steel","sonst.kfz.hersteller")
   
+    ignore.names = c("aa-iva","aa-nss","aa_iva","aa_nss","duplicate", "unknown","", "out of scope", "n/a","ds","nd","unknwon", "api","amf","bmb","abarth","bautex","capron","carpol","dangel","germaz","humber","pilote","porche","bavaria","laverda","lincoln","maybach","plymouth","auto-form","mercury","corvette","trans-poz","cita seconda","poclain vehicules","kivi","buick","bierman","mprojekt","dethleffs","tripod","zeszuta","dodge","zimny","automobiles dangel","lancia","chevrolet","smart","lexus","mini","benye","jlr ltd uk","8","steel","sonst.kfz.hersteller")
 
   library(tidyr)
   ldat = pivot_longer(select(mdat,-q), c("man", "mh", "mms"))

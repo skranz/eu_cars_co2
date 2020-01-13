@@ -1,0 +1,208 @@
+---
+title: "Exploring EU wide data on new car registrations and CO2 efficiency"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE, dev="svg", fig.height=4, fig.path="images/cars_co2/")
+library(fst)
+library(dplyr)
+library(ggplot2)
+library(lfe)
+library(tidyr)
+```
+
+I just found out that [here](https://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-16) the EU made large data sets available about every newly registered car in the EU (currently from 2012 to 2018).
+
+The data set from 2018 has over 15 million rows and many rows correspond to a single registered car. The following analysis uses a smaller data set that aggregated the original huge data sets by grouping on unique combinations of country, year, car model (more precisely the consumer name `cn`, which still yields 46609 different models), and fuel type. The aggregated data set is available on my Github repository [here](https://github.com/skranz/eu_cars_co2).
+
+OK, let's first load the data set using the [fst](https://www.fstpackage.org/) package.
+```{r}
+library(fst)
+dat = fst::read_fst("cars.fst")
+nrow(dat)
+head(dat)
+```
+
+The column `q` describes the number of newly registered cars. Let us first take a look how the total number has developed over time:
+```{r}
+library(ggplot2)
+library(dplyr)
+
+dat %>%
+  group_by(year) %>%
+  summarize(Mio_cars = sum(q,na.rm=TRUE) / 1e6) %>%
+  ggplot(aes(x=year,y=Mio_cars)) +
+    geom_line() + geom_point()
+```
+
+We see that in 2018 there were roughly 25% more newly registered cars than in 2012.
+
+The column `co2` measures how much grams CO2 per km the car emits using the [New European Driving Cycle (NEDC)](https://en.wikipedia.org/wiki/New_European_Driving_Cycle), which is actually an older procedure that is currently replaced by the [WLTP](https://ec.europa.eu/jrc/en/publication/eur-scientific-and-technical-research-reports/nedc-wltp-effect-type-approval-co2-emissions-light-duty-vehicles). 
+Let us take a look at the average co2 emissions per km over time:
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+dat %>%
+  group_by(year) %>%
+  summarize(co2 = weighted.mean(co2,q,na.rm=TRUE)) %>%
+  ggplot(aes(x=year,y=co2)) +
+    geom_line() + geom_point()
+```
+
+While on average new cars got considerably more CO2 efficient from 2012 to 2015, the trend did not continue. Rather CO2 performance slightly deteriorated from 2015 to 2018. One factor could be [Dieselgate](https://en.wikipedia.org/wiki/Volkswagen_emissions_scandal) brought to light in 2015. Let us look at the fuel type composition of new cars:
+```{r}
+# We have 15 different categories of fuel types
+unique(dat$ft)
+
+# Let us lump all but the 2 most common together
+# using fct_lump from the forcats packae
+library(forcats)
+dat = dat %>%
+  mutate(fuel2 = fct_lump(ft, 2))
+
+dat_fuel = dat %>%
+  group_by(year) %>%
+  mutate(q.year = sum(q, na.rm=TRUE)) %>%
+  group_by(year, fuel2) %>%
+  summarize(
+    mass = weighted.mean(mass, q, na.rm=TRUE),
+    co2 = weighted.mean(co2, q, na.rm=TRUE),
+    share = sum(q)/first(q.year)
+  )
+
+ggplot(dat_fuel, aes(x=year,y=share)) +
+  geom_line() + geom_point() + facet_wrap(~fuel2)
+```
+
+We see how the share of diesel cars has been declining (the dent in 2013 is probably due to missing fuel type classification of some cars in that year which appear under `Other`) while the share of petrol cars has steadily increased. Other fuel types play with a total of 4.2% in 2018 no substantial role yet.
+
+Let us take a look at the average CO2 emission per km for diesel and petrol.
+```{r}
+dat_fuel = dat_fuel %>%
+  filter(fuel2!="Other")
+
+ggplot(dat_fuel, aes(x=year,y=co2, color=fuel2)) +
+  geom_line() + geom_point()
+```
+
+Diesel cars have in every year on average always lower CO2 emissions than petrol cars. The differences are quite small in most years though. However, the average car sold with a diesel engine may differ in several dimensions from one with petrol engine.
+
+Let us compare the average mass (in kg) of the cars:
+```{r}
+ggplot(dat_fuel,aes(x=year,y=mass, color=fuel2)) +
+  geom_line() + geom_point()
+```
+
+The average car with diesel engine is roughly 300 kg heavier than one with petrol engine. Part of the extra mass is due to the fact that diesel engines are just heavier than petrol engines. Yet, that is unlikely to account for all 300 kg. Larger, more heavy car models seem to sell more often with diesel engines than smaller cars. To move more mass, more fuel must be burned. Holding the car model fixed (but not the fuel type), we would thus expect to find a larger CO2 reduction when switching from petrol to diesel than suggested in the plot above.
+
+To explore this in detail, we run the following 3 regressions
+```{r results="asis"}
+dat_reg = dat %>%
+  filter(ft %in% c("diesel","petrol")) %>%
+  filter(year == 2018) %>%
+  mutate(model = paste0(firm," ", cn))
+
+reg1 = lm(co2 ~ ft, weights = q,data = dat_reg)
+reg2 = lm(co2 ~ ft+mass, weights=q, data = dat_reg)
+# for regression with model fixed effects
+# use felm instead of lm for speed and memory reasons 
+library(lfe)
+reg3 = felm(co2 ~ ft | model,weights = dat_reg$q, data=dat_reg)
+
+library(stargazer)
+stargazer(reg1, reg2, reg3,type = "html")
+```
+
+<br>
+The first regression without any control variables finds as in our plot that the average petrol car emits in 2018 1.8g CO2/km more than a diesel car. If we control for the car mass (2nd regression) diesel has a much larger benefit of 24g CO2/km. However, this overestimates the benefits from a diesel engine because it does not account for the fact that a diesel engine causes a higher car mass. The third regression controls for car model specific fixed effects, i.e. we essentially measure the average co2 difference between diesel and petrol engines for the same car models. The 17g CO2/km is almost 10 times the size of the 1.8g CO2/km difference shown in the plot.
+
+The last regression could be misleading if for most cars the model label already differentiates between the fuel type (e.g. a `Golf TSI` has a petrol engine and a `Golf TDI` a diesel engine.) The code below verifies however, that over 2/3 of cars sold are from models that have entries for both petrol and diesel engines.
+```{r}
+# How many consumer names do we have with diesel and petrol?
+
+dat_reg %>%
+  group_by(model) %>%
+  mutate(
+    has_diesel = "diesel" %in% ft,
+    has_petrol = "petrol" %in% ft,
+    has_both = has_diesel & has_petrol
+  ) %>%
+  group_by(has_both) %>%
+  summarize(q = sum(q, na.rm=TRUE), count=n())
+```
+
+From 2012 to 2018 the share of petrol cars has gone up by roughly 17 percentage points. If in 2018 an extra 17% of all cars would drive with diesel instead of petrol, the calculations above suggest as rough estimate that in 2018 the average CO2 emission would have been lower by 0.17*17.21 = 2.9 g CO2/km which is roughly only 2.4% of the average 2018 emissions.
+
+Other reasons for the stagnation of CO2 efficiency from 2015 onward could be shifts in consumer preferences towards more heavy or more powerful cars (like SUV). Let us make the simplifying assumption that CO2 efficiency only depends on the car's mass, engine power, fuel type and a year fixed effect that measures the state of technology. The following code then compares the actual development of CO2 efficiency with an hypothetical pure technological effect that we would get if the average car mass, engine power and fuel type would stay in every year the same as in 2012.
+
+```{r}
+reg_dat = dat %>%
+#  filter(ft %in% c("diesel","petrol")) %>%
+  mutate(Year = as.factor(year))
+
+# Run regression and store year dummies
+reg = lm(co2 ~ 0+Year+mass+power+ft ,data=reg_dat, weights=reg_dat$q)
+year.dummies = coef(reg)[1:7]
+
+plot_dat = dat %>%
+  group_by(year) %>%
+  summarize(real_co2 = weighted.mean(co2,q,na.rm=TRUE)) %>%
+  mutate(technological = real_co2[1]-year.dummies[1] + year.dummies ) %>%
+  tidyr::pivot_longer(c("real_co2", "technological"),names_to = "type", values_to = "co2")
+
+tail(plot_dat,4)
+
+ggplot(plot_dat, aes(x=year,y=co2, color=type)) + 
+  geom_line() + geom_point() +
+  # CO2 target before 2020
+  geom_hline(yintercept = 130, linetype="dashed") + 
+  # CO2 target in 2020
+  geom_hline(yintercept = 95, linetype="dashed") 
+```
+
+While the pure technological effect has in total a slightly stronger CO2 reduction than the real reduction (ca. 3 g CO2/km difference) that is a rather small effect. Indeed, it is of a similar size as the previously estimated effect from the switch from diesel to petrol engines.
+
+I added to the plot the overall EU emission targets of 130 g CO2/km before 2020 and 95 g CO2/km in 2020 as a reference (In a second blog post, we will look in much more detail at the EU regulation and what the new target means for particular car companies). We see that even the pure technological measure is in 2018 far away from the new CO2 target. 
+
+Overall, being a layman concerning the automobile industry and not knowing anything about engineering, I cannot infer the reason for the slowdown of CO2 reductions. Perhaps after Dieselgate the tests became more accurate and thus tougher. Perhaps car companies did not yet put much effort in reducing CO2 emissions in 2018 because the current target is well reached. Perhaps traditional diesel and petrol technology is reaching its efficiency frontier and only very gradual progress is possible. 
+
+Anyway, it seems a fair bet that without a stronger reliance on alternative fuel technologies, it will be very hard to reach the new CO2 target. Let us plot the average CO2 emissions by fuel type for newly registered cars in 2018:
+```{r}
+dat %>%
+  filter(year == 2018) %>%
+  group_by(ft) %>%
+  summarize(
+    co2 = weighted.mean(co2, q,na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x=fct_reorder(ft,-co2), y=co2)) + geom_col() +  xlab("Fuel Type") + geom_hline(yintercept = 95) + coord_flip()
+```
+
+While natural gas (ng) performs a bit better than diesel or petrol, the average is still above the new emission target. Liquified petrol gas (lpg) performs even a bit worse than gasoline. (Note however that these raw averages do not control for other car characteristics.)
+
+Electric and hydrogen cars are counted as zero emission cars and also hybrid cars (petrol-electric and diesel-electric) are substantially below the new target. It is, of course, quite debatable to classify electric cars for regulatory purposes as zero emission vehicles since much electricity is still generated by burning dirty coal and somewhat less dirty natural gas. (See my [earlier post](https://skranz.github.io/r/2018/11/21/Electric_Cars.html) for a link to an interactive study that compares the total environmental impacts of driving electric and gasoline cars using US data.)
+
+While there is hope that electricity production will become more green, progress is slow. In particular, Germany currently faces the huge problem that construction of new onshore wind power plants has severely dropped in 2019 (see the data [here](https://energy-charts.de/power_inst_de.htm?year=all&period=annual&type=inc_dec)), mainly due to lengthy legal actions against new plants and lack of suitable locations.
+
+Anyway the regulation is as it is. Let us have a look at the development of the shares of those 4 car types:
+```{r}
+dat %>%
+  group_by(year) %>%
+  mutate(q.year = sum(q, na.rm=TRUE)) %>%
+  group_by(year, ft) %>%
+  summarize(share = 100*sum(q, na.rm=TRUE) / first(q.year)) %>%
+  filter(ft %in% c("hydrogen","electric","petrol-electric","diesel-electric")) %>%
+  ggplot(aes(x=year, y=share)) +
+  geom_line() + geom_point() + facet_wrap(~ft)
+```
+
+Of these 4 technologies, only electric and petrol-electric hybrid cars seem to be currently relevant in Europe. OK, let's finish for now. In the next blog post on this topic, I want to use the data set to investigate in more detail the new regulations and the impacts on different producers and car types.
+
+
+## Appendix: Original data in fst format
+
+When importing the original data sets from the [EU website](https://www.eea.europa.eu/data-and-maps/data/co2-cars-emission-16), I had to deal at some point with UTF-16 encoding and a failure of R's `unzip` function ( [here](https://github.com/skranz/eu_cars_co2_fst/blob/master/download_and_convert.R) is some of my import code). If you prefer the data in the compressed format used by the [fst](https://www.fstpackage.org/) package, you can alternatively download [this](https://github.com/skranz/eu_cars_co2_fst) Github repository (even though compressed it is almost 1 GB large). 

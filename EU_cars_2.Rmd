@@ -1,0 +1,658 @@
+---
+title: "Exploring the tightened EU CO2 emission standards for cars in 2020 -- Why now selling an electric car can be worth an extra 18000€ for producers."
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE, dev="svg", fig.height=4, fig.width=8, fig.path="images/cars_co2/",error = TRUE)
+library(fst)
+library(dplyr)
+library(ggplot2)
+library(lfe)
+library(tidyr)
+library(stargazer)
+library(dplyrExtras)
+library(stringtools)
+```
+
+In this blog post I want to explore the [EU regulation](https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=CELEX:02009R0443-20180517) for average CO2 emissions of manufacturer's car fleets using the EU data set of newly registered cars. The data was already studied on an aggregate level in my [earlier post](https://skranz.github.io/r/2019/12/17/EU_Cars_CO2.html). Here we explore, in particular, the monetary implications of the regulatory details for different car manufactures and car types. Let's first have a look at the data set, which is available on a  [Github repository](https://github.com/skranz/eu_cars_co2):
+```{r}
+dat = fst::read_fst("cars2.fst")
+NROW(dat)
+# Show 2 example rows
+dat[c(260566,100789),]
+```
+
+The data contains one row for each combination of `year`, `country` where the car was registered, manufacturing `firm`, car name `cn` and fuel type `ft`. The variable `q` measures the number of registered such cars and `co2` the CO2 emissions in gram per km using the [NEDC](https://en.wikipedia.org/wiki/New_European_Driving_Cycle) procedure.
+
+Before 2020 the EU had the target that on average newly registered cars should not emit more than 130 g CO2/km and for 2020 the target has been reduced to 95 g CO2/km with further reduction in subsequent years. Let us compare those targets with the average tested emissions of all newly registered cars:
+```{r}
+dat %>%
+  group_by(year) %>%
+  summarize(co2 = weighted.mean(co2, q, na.rm=TRUE)) %>%
+  ggplot(aes(x=year,y=co2)) + 
+  geom_line() + geom_point() + ylab("g CO2/km") +
+  # CO2 target before 2020
+  geom_hline(yintercept = 130, linetype="dashed") + 
+  # CO2 target in 2020
+  geom_hline(yintercept = 95, linetype="dashed") 
+```
+
+Unless there is a big jump, it does not look like the new target will be reached in 2020. Let us take a look at the fleet averages for the 11 biggest (with respect to the number of new cars sold in Europe) car firms.
+```{r fig.height=5}
+library(dplyrExtras)
+library(forcats)
+dat = dat %>% 
+  mutate_rows(is.na(firm), firm="Other") %>%
+  mutate(
+    firm = fct_reorder(firm, q, sum, .desc=TRUE),
+    firm11 = firm %>% fct_other(.,levels(.)[1:11]),
+  )
+
+dat %>%
+  group_by(year, firm11) %>%
+  summarize(co2 = weighted.mean(co2, q, na.rm=TRUE)) %>%
+  ggplot(aes(x=year,y=co2)) + 
+  geom_line() + geom_point() + ylab("g CO2/km") +
+  facet_wrap(~firm11) +
+  geom_hline(yintercept = 130, linetype="dashed") + 
+  geom_hline(yintercept = 95, linetype="dashed") 
+```
+
+We see quite a bit of diversity. Toyota has the lowest fleet averages and may well manage to reach the new 2020 target. Also the french car producers Renault, Peugeot and Citroen have low average emissions even though they increased their emissions from 2016 to 2018. The highest emissions have the 3 German premium car manufacturers BMW, Daimler and Audi.  
+
+If its fleet of newly registered cars produces too much CO2 on average the manufacturer has to pay fine to the EU. From 2019 onward the total fine is given by
+
+    Excess emissions * 95 €/(g CO2/km) *
+    number of new passenger cars.
+
+Let us for the moment ignore further adjustments specified in the regulation. Then the excess emissions would simply be the average emissions per car in the fleet minus the target (which is 95g CO2/km in 2020). If all cars would be produced by a single firm and the fleet stayed the same as in 2018 (with average CO2 emissions of 121 g CO2/km) the fine per car under the new emission target in 2020 would be given by:
+
+    (121-95) * 95€ = 26 * 95€ = 2470€
+
+Quite a substantial amount. If the fleets are differentiated by firm, the fine would range from `(102-95)*95€ = 665€` for an average  Toyota to `(133-95)*95€ = 3610€` for an average Daimler.
+
+However, there are a series of further adjustments that affect the emission targets and fines. We will explore these adjustments step by step in this post. All details are taken from the official EU regulation  [here](https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=CELEX:02009R0443-20180517).
+
+### Manufacturer Pools
+
+The EU allows groups of manufacturers to form *pools* such that every newly registered car of a pool will be part of a single fleet. If we have one manufacturer whose fleet is below the target and another one whose fleet is above, forming a joint pool will reduce the sum of the fines that have to be paid.
+
+Firms belonging to the same mother company naturally belong to the same pool (e.g. Seat, Skoda, Audi, Volkswagen all belong to a common pool). But also unrelated firms can form a joint pool, e.g. Toyota and Mazda form a common pool in 2018. The rationale for allowing pools of unrelated firms is that otherwise the  regulation could create incentives for mergers (e.g. Tesla would be an extremely attractive target) that increase market concentration and may harm consumers.
+
+The following plot shows the development of average CO2 emissions of newly registered cars for the 8 biggest pools:
+
+```{r}
+library(dplyrExtras)
+library(forcats)
+dat = dat %>% 
+  mutate_rows(is.na(pool), pool="Other") %>%
+  mutate(
+    pool = fct_reorder(pool, q, sum, .desc=TRUE),
+    pool8 = pool %>% fct_other(.,levels(.)[1:8]),
+  )
+
+
+dat %>%
+  group_by(year, pool8) %>%
+  summarize(co2 = weighted.mean(co2, q, na.rm=TRUE)) %>%
+  ggplot(aes(x=year,y=co2)) + 
+  geom_line() + geom_point() + ylab("g CO2/km") +
+  facet_wrap(~pool8) +
+  # CO2 target before 2020
+  geom_hline(yintercept = 130, linetype="dashed") + 
+  # CO2 target in 2020
+  geom_hline(yintercept = 95, linetype="dashed") 
+```
+
+Qualitatively, the picture looks similar to the one of individual firms. The Japanese Toyota-Mazda pool leads, followed by the pools lead by French companies (psa-opel and renault), while the pools lead by German or Italian companies (vw, ford, bmw, fca, daimler) perform worse.
+
+Even though climate protection plays an important role in EU policy, it would still seem quite surprising if the EU passed a regulation that imposes on average substantially higher fines for European car companies than Japanese ones without making some adjustments that make this gap smaller.
+
+### Weight Adjustment
+
+One implemented adjustment is that heavier cars have a more generous emission target. In 2019 and 2020 the formula for a pool's fleet target is given by
+
+ `target_pool = 95 + a*(mass_pool-M0)`
+
+where `mass` is the average mass (in kg) of the cars in the pool and `M0` is the average mass of all cars sold in previous years. The factor `a` is set from 2019 onward to `0.0333` and `M0` is `1379.88` kg in 2019. This means every additional kg mass of a pool's average car reduces the CO2 target by 0.0333 g CO2/km.
+
+The following code shows the average fleet emission together with the adjusted targets of the largest pools. The parameters for `a` and `M0` changed over years and the corresponding parameters are in `regulation.csv` which can also be found on my Github [repository](https://github.com/skranz/eu_cars_co2): 
+```{r}
+reg.df = read.csv("regulation.csv",)
+
+# By pool
+pool.dat = dat %>%
+  group_by(pool8, year) %>%
+  summarize(
+    co2_pool = weighted.mean(co2, q,na.rm = TRUE),
+    mass_pool = weighted.mean(mass, q, na.rm=TRUE)
+  ) %>%
+  left_join(reg.df, by="year") %>%
+  mutate(
+    target_pool = target + a*(mass_pool-M0),
+    target2020_pool = 95 + 0.033*(mass_pool-1379.88)
+  )
+  
+
+ggplot(pool.dat,aes(x=year,y=co2_pool)) + facet_wrap(~pool8)  +
+  # The unadjusted target for 2020 of 95 g
+  geom_hline(yintercept = 95, linetype="dashed") +
+  # Target of the corresponding year
+  geom_line(aes(x=year, y=target_pool), color="#5555aa") +
+  # Target using formula for 2020
+  geom_line(aes(x=year, y=target2020_pool),color="#5555aa") +
+  geom_line() + geom_point()
+```
+
+We see how the weight adjustment mainly benefits the BMW and Daimler pools. The following plot shows the average fee per car with and without weight adjustments (still ignoring any further adjustments):
+```{r}
+df = pool.dat %>%
+  ungroup() %>%
+  filter(year==2018) %>%
+  mutate(
+    non_adjusted = (co2_pool - 95)*95,
+    weight_adjusted = (co2_pool-target2020_pool)*95,
+    pool8 = fct_reorder(pool8, weight_adjusted),
+    benefit = weight_adjusted < non_adjusted
+  ) %>%
+  tidyr::pivot_longer(cols = c("non_adjusted","weight_adjusted"),names_to = "fee_type",values_to = "fee") 
+  
+ggplot(df,aes(pool8, fee, color=fee_type))  +
+  geom_line(aes(group=pool8), color="black") +
+  geom_point(size=2) + coord_flip()
+```
+
+Without weight adjustment Daimler would pay 2020 a fine of  `(133-95)*95€ = 3610€` per car (given the 2018 fleet) while with weight adjustment the fine reduces to `(133-102)*95€ = 2945€`.
+
+I am not privy to the internal bargaining that precedes EU law making, but it is not hard to imagine how weight adjustment was a compromise in order to make Germany agree to a regulation with tight fleet standards on CO2 emission. The argument was probably along the line that premium cars are quite different products than small cars, which should be accounted for.
+
+One can have different views on such compromises, but it does not seem surprising at all to me given the importance of the car industry for many parts of Germany. (Beside such compromises and the factors leading to them, there are several other reasons that make me personally doubt whether very tight fleet standards are a good instrument for emission reduction compared to the alternative of higher CO2 prices for fuel. I will discuss some pro and cons later in this post.)
+
+One obvious drawback of weight adjustment is that it reduces incentives to build lighter cars, which is an important channel to make cars more CO2 efficient. Let us take a look how in 2018 the CO2 emissions of a car relates to its mass (controlling for fuel type, year fixed effects and in one specification engine power):
+
+```{r results="asis"}
+library(lfe)
+library(stargazer)
+
+reg1 = felm(co2~mass+power|ft+year, data=dat)
+reg2 = felm(co2~mass|ft+year, data=dat)
+stargazer(reg1, reg2,type = "html")
+```
+<br>
+
+The first specification where we control for engine power probably yields a coefficient that is closer to the average causal impact of increasing car mass by 1 kg. It suggests an emission increase by 0.0574 g CO2/km.
+
+This means the weight adjustment factor of `a=0.0333` does not fully cancel incentives to reduce CO2 emissions by building cars with lower mass but cancels more than half the effect.
+
+### Distribution of excess emissions over car models
+
+The following plot provides more insights how the excess emissions above each pool's targets are distributed over the different sold car types in 2018
+
+```{r warning=FALSE, dev="png"}
+dat2018 = dat %>%
+  filter(year == 2018, ft != "unknown") %>%
+  mutate(
+    model = paste0(firm, " ", cn),
+    fuel = fct_collapse(ft,
+      petrol = "petrol",
+      diesel = "diesel",
+      plugin_hybrid = c("petrol-electric","diesel-electric"),
+      electric = "electric",
+      other = c("lpg","hydrogen","e85","ng","ng-biomethane")
+    ) %>% 
+    fct_reorder(q, sum, na.rm=TRUE)
+  ) %>%
+  group_by(pool8) %>%
+  mutate(
+    q_pool = sum(q, na.rm=TRUE),
+    mass_pool = weighted.mean(mass, q, na.rm=TRUE),
+    co2_pool = weighted.mean(co2, q, na.rm=TRUE),
+    target_pool = first(95 + 0.0333*(mass_pool-1379.88)),
+    excess_co2 = co2- target_pool,
+    fee = (co2-target_pool - 0.0333*(mass-mass_pool))*95,
+    share.in.pool = q / q_pool
+  ) %>%
+  ungroup()
+
+pool.df = dat2018 %>%
+  group_by(pool8) %>%
+  summarize(excess_pool = first(co2_pool)-first(target_pool))
+
+ggplot(dat2018 %>% filter(co2 <= 300),
+  aes(y=excess_co2,x=fct_rev(pool8))) +
+  geom_jitter(aes(color=fuel, size=q),alpha=0.15) +
+  geom_hline(aes(yintercept=0)) +
+  geom_violin(aes(weight=share.in.pool), alpha=0.7) +
+  geom_point(data=pool.df, aes(y=excess_pool), size=2) +
+  coord_flip() + theme_bw() 
+```
+
+Except for Toyota-Mazda no pool has a substantial share of petrol or diesel cars whose emissions are below the 2020 target of the pool. Volkswagen has a few cars (classified as `other`) driving with natural gas a little bit below the target.
+
+Far below the target are the electric cars of all firms. That is because the EU regulation only counts emissions that are directly emitted by the car but ignores emissions of the power plants that generate the electricity used by the car. Thus electric cars (as well as the very few hydrogen cars) count as zero emission cars. For the same reason, plugin-hybrids that can drive with an electric engine or petrol also are solidly below the emission targets.
+
+
+### Implicit fee for each car and huge implicit subsidies for electric cars
+
+As far as we have specified the regulation for 2020, selling an additional car with emissions of `co2` and a given `mass` changes the total fees of a pool whose emissions are above target by
+
+    (co2-target_pool - a*(mass-mass_pool)) * 95 Euro
+
+The following plot shows the averages of these fees over fuel types for the different pools. (We still ignore an important additional feature of the regulation: super credits.)
+
+```{r fig.width=12, fig.height=5, dev="svg"}
+dat2018 = dat2018 %>%
+  group_by(pool8) %>%
+  mutate(
+    fee = (co2-target_pool - 0.0333*(mass-mass_pool))*95
+  ) %>%
+  ungroup()
+
+sum.dat = dat2018 %>%
+  group_by(pool8, fuel) %>%
+  summarize(
+    fee = weighted.mean(fee, q, na.rm=TRUE),
+    q = sum(q, na.rm=TRUE),
+    share.fuel = q / first(q_pool),
+    label = paste0(round(fee), "€  ", round(100*share.fuel,1),"%")
+  ) %>%
+  filter(fuel != "other")
+
+ggplot(sum.dat, aes(y=fee,x=fuel, fill=fuel, label=label)) + geom_col() + geom_text(size=4) + facet_wrap(~pool8) + coord_flip() + ylim(c(-13000,7000))
+```
+
+According to this calculation, selling an additional electric car would on average be worth between 8000€ and 10000€ for each manufacturer in 2020. These gains in terms of fee reduction from selling an electric car are huge for all pools.
+
+(The differences in gains from selling an electric car between pools are due to different masses of electric cars and other cars in the pools' fleets. For example, we find the lowest gain from selling an electric car for Daimler because most of its electric cars are the light weight Smarts whose mass is substantially below the average mass of a Daimler.)
+
+### Super Credits
+
+Article 5a of the EU regulation makes the gains from selling electric cars even larger:
+
+```
+Article 5a
+
+Super-credits for 95 g CO2/km target
+
+In calculating the average specific emissions of CO2, each new passenger car with specific emissions of CO2 of less than 50 g CO2/km shall be counted as:
+
+— 2 passenger cars in 2020,
+— 1,67 passenger cars in 2021,
+
+— 1,33 passenger cars in 2022,
+
+— 1 passenger car from 2023,
+
+for the year in which it is registered in the period from 2020 to 2022, subject to a cap of 7,5 g CO2/km over that period for each manufacturer.
+```
+
+This means if the cap of 7,5g CO2/km is not binding, a car with emissions below 50g CO2/km saves a pool in 2020 via super credits additional:
+
+    (target_pool-co2) * 95 Euro
+
+Let us look at the fee change of selling a particular car type in 2020 assuming a factor 2 super credit (and non-binding cap):
+
+```{r fig.width=15,fig.height=5, dev="svg"}
+dat2018 = dat2018 %>%
+  group_by(pool8) %>%
+  mutate(
+    fee_sc = fee - ifelse(co2<50, target_pool-co2,0)*95
+  ) %>%
+  ungroup()
+
+sum.dat = dat2018 %>%
+  group_by(pool8, fuel) %>%
+  summarize(
+    fee_sc = weighted.mean(fee_sc, q, na.rm=TRUE),
+    q = sum(q, na.rm=TRUE),
+    share.fuel = q / first(q_pool),
+    label = paste0(round(fee_sc), "€  ", round(100*share.fuel,1),"%")
+  ) %>%
+  filter(fuel != "other")
+
+ggplot(sum.dat, aes(y=fee_sc,x=fuel, fill=fuel, label=label)) + geom_col() + geom_text(size=4) + facet_wrap(~pool8) + coord_flip() + ylim(c(-22000,7000))
+```
+
+These are gigantic implicit subsidies for electric cars in 2020!
+
+To put this in relation, we can compute that, with full super credits, an VW E-Golf would reduce Volkswagen's fees by 18906€:
+
+```{r}
+library(stringtools)
+dat2018 %>%
+  filter(firm=="volkswagen", ft=="electric") %>%
+  select(cn,fuel,fee, fee_sc,q) %>%
+  head(1)
+```
+
+A quick Google search finds historical list price of the E-Golf of 35900€ in 2018 and 31000€ in 2019. In both years the old CO2 target of 130 grams was still in place which VW overachieved with a secure margin. This means VW did not pay CO2 fees for its fleet in 2018 and 2019. Thus selling an additional E-Golf did not reduce any CO2 fleet fees and thus should not have affected those historical prices.
+
+If VW does not reach the new target in 2020 (which seems likely), it now has a tremendously higher incentives to sell electric cars than in the previous years: the fee reduction of 18906€ is more than half of the original price of an E-Golf and even though super credits phase out in later years, the fee reduction of 9769€ without super credits is still almost a third of the 2019 price.
+
+Given these numbers it does not seem surprising that Volkswagen made massive investments into electric cars, even though some observers consider it a risky gamble (see e.g. [here](https://www.businessinsider.de/international/vw-making-huge-bet-on-electric-vehicles-in-next-decade-2019-11) or [here](https://www.forbes.com/sites/neilwinton/2019/05/06/volkswagen-investors-worry-about-ambitious-electric-car-plans/#f873eae47c36))
+
+### Thoughts on pricing
+
+An interesting question is by how much electric car prices will fall in 2020. Probably by considerably less than producer's marginal benefit from fee reduction for several reasons:
+
+  1. Basic microeconomic models suggest that firms with some market power will typically not fully pass on marginal cost changes to consumers.
+  
+  2. Limited production capacity: it makes no sense to increase demand by price reductions to an extend that cannot be produced.
+  
+  3. Consumers who bought electric cars in 2019 may feel cheated if car prices drop too drastically this year.
+  
+  4. The marginal fee reduction effect of an electric car gets smaller in future years as super credits phase out and the emmission target further tightens. It is thus risky to induce in consumers expectations of very low electric car prices.
+  
+  5. The fee reduction effect only occurs for a car registered in the EU. But setting substantially lower prices in the EU than in other markets can be risky, e.g. because of arbitrage opportunities.
+  
+Points 3-5 suggest that car companies who are not yet capacity constrained may make attractive leasing offers of electric cars to large business clients, or to employees. If the manufacturers own car sharing or car rental companies, it is probably also quite attractive to increase the number of electric cars in those fleets in 2020.
+
+I wonder if e.g. for a firm like [ShareNow](https://en.wikipedia.org/wiki/ShareNow) that has fleets in the EU and North America it could now become attractive to swap the US and EU electric cars after one year to get more new BMW or Daimler electric car registrations in the EU. It would of course not be  desirable from a climate point of view to ship cars over the ocean for regulatory arbitrage. The monetary incentives might be there, but probably the net gains are too small compared to the risk of image damage. 
+
+
+### Who can explain the details of the cap on super credits?
+
+I am not really sure, however, how the regulatory cap of max. 7.5 g CO2/km in the period from 2020-2022 on super credits is exactly implemented. If Article 5a refereed to pools, it probably would mean that over the three years together a pool's average CO2 emissions with super credits can at most be 7.5 g CO2/km lower than without super credits. But what if the pool composition changes during those 3 years? Also the Article 5a refers to a *manufacturer* not a pool and Article 7 about pools only says that pools are relevant for the obligations in Article 4 but says nothing about Article 5a.
+
+Assume Article 5a refers only to manufacturers, not to pools. Let us take a look at the reduction of the average CO2 emissions due to super credits on a firm level in 2020 using the 2018 fleet:
+```{r}
+dat2018 %>%
+  mutate(
+    q_sc = ifelse(co2<50, q*2, q)
+  ) %>%
+  group_by(firm) %>%
+  summarize(
+    co2_firm = weighted.mean(co2, q, na.rm=TRUE),
+    co2_sc_firm = weighted.mean(co2, q_sc, na.rm=TRUE),
+    reductions_sc = co2_firm - co2_sc_firm
+  ) %>%
+  filter(firm %in% c("tesla", levels(dat2018$firm11))) %>%
+  arrange(-reductions_sc)
+```
+
+Already for the 2018 fleet the super credit reductions for BMW would be 3.74 g CO2/km in 2020. Given that there are strong incentives to sell more electric cars probably the cap will be binding for BMW and possible some other manufacturers.
+
+But I am still not sure how the cap will be computed. What happens if Tesla joins some pool in 2020 and some other in 2021? For Tesla itself super credits don't reduce the CO2 emissions as they are always 0. Yet inside a pool, Tesla's super credits may reduce CO2 emissions substantially. How will the cap be computed? Maybe it is clear for lawyers (and probably Tesla employs clever people who have figured it out) but as an economist, I really think that some example calculation would make this regulation easier to understand.
+
+### With whom does Tesla go swimming?
+
+Tesla was not part of any pool in 2018. Yet, if it joins a pool who misses the 2020 target and Tesla sells like in 2018 roughly 20000 cars (all electric), the other pool members would even without super credits save roughly between `8000*20000=160 Mio €` and `10000*20000=200 Mio €`, which is more than Tesla's 2018 profits (but less than 1% of its revenues). With super credits, savings for the pool could increase up to twice as much.
+
+That is a nice time for a quiz:
+
+<iframe src="https://docs.google.com/forms/d/e/1FAIpQLSc9-4uFg1eX58MZgjDyqj27cwha1uwIvPt1k7Mz73xOGbnYtw/viewform?embedded=true" width="640" height="541" frameborder="0" marginheight="0" marginwidth="0">Loading…</iframe>
+
+You can find the answer, for example, [here](https://www.ft.com/content/7a3c8d9a-57bb-11e9-a3db-1fe89bedc16e).
+
+If you think about it, it makes a lot of sense that Tesla joint a pool with FCA (Fiat and Chrysler). First, FCA had the highest excess CO2 emissions in 2018, i.e. FCA seems very likely to miss the 2020 and later targets. Second, FCA has not yet built electric cars for themselves, i.e. it is not a fierce competitor of Tesla.
+
+It is interesting how much in total Tesla will benefit from the tighter new EU regulations. On the one hand it is nice to get money from FCA and the higher attractivity of electric cars may generally be good for Tesla. On the other hand, Tesla most likely will face much fiercer competition given that all pools have strong incentives to sell more electric cars and may thus strongly reduce prices. It probably depends a lot on the maximum production capacities for electric cars of Tesla's competitors.
+
+### What are the CO2 emissions of electric cars?
+
+Of course, assuming in the regulation that electric cars have zero CO2 emissions does not fit reality since much electricity is still generated by burning coal and gas. The column `elec` in our data set contains for electric cars and plug-in hybrids the estimated electricity usage in Wh per driven km.
+
+```{r}
+# Average Wh/km over all electric cars
+dat %>%
+  filter(ft == "electric") %>%
+  summarize(Wh = weighted.mean(elec,q, na.rm=TRUE))
+
+# Average Wh/km over years
+dat %>%
+  filter(ft == "electric") %>%
+  group_by(year) %>%
+  summarize(Wh = weighted.mean(elec,q, na.rm=TRUE))
+```
+
+There is no clear time trend, so we just use the overall average of 156 Wh/km for our further calculations. We now use a data set on yearly CO2 emission intensities from electricity generation of different EU countries (until 2016) provided by the EU [here](https://www.eea.europa.eu/data-and-maps/daviz/sds/co2-emission-intensity-from-electricity-generation-2) to estimate the corresponding g CO2 emissions of driving an electric car for 1 km.
+
+```{r}
+co2_int = read.csv("co2-intensity-electricity-generation.csv")
+co2_int = co2_int %>%
+  filter(year >= 2010) %>%
+  mutate(
+    co2_Wh = g_co2_kWH / 1000,
+    co2_el_car = 156*co2_Wh,
+    country = forcats::fct_reorder(country, co2_Wh,mean)
+  )
+co2_int %>% filter(country=="EU")
+
+# Show averages for EU
+ggplot(co2_int %>% filter(country=="EU"), aes(x=year, y=co2_el_car)) + geom_line() + geom_point() +  geom_hline(yintercept = 130, linetype="dashed")+ geom_hline(yintercept = 95, linetype="dashed")
+```
+
+We see that the average newly registered electric car has emissions around 46 g CO2/km given the average CO2 intensity of EU electricity generation in 2016. While this is far above 0, it is only about 37% of the average CO2 emission of petrol and diesel cars between 2012 and 2018 (123 g CO2/km) and about half the new 2020 target of 95g CO2/km.
+
+### Compare Golf and E-Golf
+
+Of course, the average electric car may differ in size and many other dimensions from the average petrol or diesel car in our sample. For a better comparison let us compare Volkswagen Golf from 2018 with different fuel types:
+
+```{r}
+df = dat2018 %>%
+  filter(firm=="volkswagen", has.substr(cn,"GOLF")) %>%
+  group_by(fuel) %>%
+  summarize(
+    co2_el = weighted.mean(elec*0.2958, q, na.rm=TRUE),
+    co2 = weighted.mean(co2, q, na.rm=TRUE),
+    mass = weighted.mean(mass, q, na.rm=TRUE),
+    q = sum(q, na.rm=TRUE)
+  ) 
+df
+```
+
+The results are similar to the aggregate averages. The CO2 emissions of an average 2018 E-Golf with average 2016 EU electricity mix are 38% of a diesel and 35% of a petrol Golf. (The data also illustrates one problem of electric cars: they are much heavier than diesel or petrol cars. Furthermore, the average E-Golf has a quite short range. Longer range means more batteries and thus an even heavier car, which needs more electricity to move.)
+
+The following plot shows how counting electricity as zero emissions and super credits (at the 2020 factor of 2 and no cap) change the CO2 emissions of the 2018 fleets of the 8 largest pools compared to using CO2 emmission of the average EU electricity mix without super credits. We now already add Tesla to the FCA pool, since they form a joint pool in 2020.
+
+```{r}
+dat2018 = dat2018 %>%
+  mutate_rows(firm == "tesla", pool8 = "fca-tesla") %>%
+  mutate_rows(startsWith(as.character(pool), "fca"), pool8 = "fca-tesla")
+  
+
+df = dat2018 %>%
+  filter(pool8 != "Other") %>%
+  mutate(
+    co2_el = replace_na(elec*0.2958,0),
+    co2_fuel = replace_na(co2, 0),
+    co2_tot = co2_el + co2_fuel,
+    q_sc = ifelse(co2_fuel < 50, 2*q, q)
+  ) %>%
+  group_by(pool8) %>%
+  summarize(
+    zero_co2 = weighted.mean(co2_fuel, q, na.rm=TRUE),
+    zero_co2_and_sc = weighted.mean(co2_fuel, q_sc, na.rm=TRUE),
+    eu_co2 = weighted.mean(co2_tot, q, na.rm=TRUE)
+  ) %>%
+  mutate(
+    pool8 = fct_reorder(pool8, eu_co2)
+  ) %>%
+  tidyr::pivot_longer(cols = c("zero_co2","zero_co2_and_sc", "eu_co2"),
+    names_to = "electricity", values_to = "co2")  
+
+ggplot(df,aes(pool8, co2, color=electricity))  +
+  geom_line(aes(group=pool8), color="black") +
+  geom_point(size=3) + coord_flip()
+```
+
+If the pools kept their 2018 fleet in 2020, BMW would benefit most from counting electric cars as zero emission cars, followed by Renault, FCA-Tesla and Daimler. 
+
+# CO2 intensity of electric cars between countries
+
+The CO2 intensity of electricity production differs quite substantially between countries. The following plot shows the CO2 emissions in g/km of the average sold EU electric car for the different EU countries:
+
+```{r fig.width=8, fig.height=6}
+ggplot(co2_int, aes(x=year, y=co2_el_car)) + geom_line() + geom_point() + facet_wrap(~country) + geom_hline(yintercept = 130, linetype="dashed") + geom_hline(yintercept = 95, linetype="dashed")
+```
+
+There is substantial heterogeneity between countries. While an electric car loaded with the average electricity mix in Sweden, France or Austria would have very low emissions, in Poland it would have much higher emissions than the average petrol or diesel car. 
+
+Given the EU's focus on a unified market, it is understandable that the regulation does not differentiate where in the EU a new car is registered. However, it is still hard to see any environmental benefit of electric cars driven in Poland that would justify the enormous implicit subsidies that the current fleet regulation implies. 
+
+One also should keep in mind that while electricity production in France and Sweden emits very little carbon, it creates nuclear waste. One can be of different opinion about the relative dangers of climate change and nuclear power plants, though.
+
+### Fleet CO2 targets vs pricing actual CO2 emissions
+
+Are tight CO2 fleet standards a good instrument to reduce CO2 emissions?
+Basic economic analysis rather points to a uniform price of every tonne actual emitted CO2 (and CO2 equivalents of other GHG) as an optimal instrument to fight climate change in a cost efficient way. This price could be imposed by a tax or via a comprehensive CO2 trading scheme that would augment the current EU certificate trading by certificates on fossil fuel consumption for transport and household heating.
+
+Compared to such higher CO2 prices, fleet targets have several disadvantages (see also [here](https://www.oecd-ilibrary.org/docserver/235407601737.pdf?expires=1578467486&id=id&accname=guest&checksum=41BBDC87FD37FDA23B434DCD17CEA3C2) or [here](wiwi.uni-muenster.de/cawm/sites/cawm/files/cawm/download/Diskussionspapiere/cawm_dp84.pdf) for more detailed discussions):
+
+  - CO2 Fleet targets don't take into account how many km a car is driven. It provides thus no incentives to drive less. In contrast, higher CO2 prices on fuels provide incentives for both buying more fuel efficient cars and for driving less.
+  
+  - Fleet targets only influence the price of newly sold cars. If new car prices increase substantially by tighter standards, incentives to buy new cars go down. The average car fleet gets older, which reduces fuel efficiency. Higher CO2 prices on fuel instead provide incentives to buy new, more fuel efficient cars.
+  
+  - We have seen how the CO2 emissions of electric cars depend strongly on where they are driven. This is not accounted for in the EU fleet standards. In contrast, with a common CO2 price for car and power plant fuels, it would be automatically be relatively more attractive to drive electric cars in countries that produce electricity with little CO2 emissions than in countries that mainly have coal power plants.
+  
+  - The actual fleet target regulation has compromises like weight adjustment that reduce the incentives to build cars more CO2 efficient.
+
+There are also some possible advantages of fleet targets compared to direct CO2 pricing.
+
+  - Consumers could be myopic and in their buying decision not account sufficiently the fuel cost savings from more efficient cars. They may react stronger to a direct increase of a car price induced by tighter fuel standards. But e.g. [Busse et. al. 2013](https://www.aeaweb.org/articles?id=10.1257/aer.103.1.220) find little evidence for such myopia.
+  
+  - Fleet standards that are not too tight and can be satisfied if manufacturers make reasonable effort to reduce emissions can provide incentives for car manufacturers to make cars more efficient without actually imposing a tax. This leads to a lower tax burden for car users than higher CO2 prices. This may make fleet standards politically easier to implement and may be considered fairer (in particular by car users).
+  
+  - Even tight fleet standards, which actually imply taxes on new cars, may be politically easier to implement than comprehensive, higher CO2 prices. First, fleet standards are not *called* a tax, which probably gives less scope for political attacks. Second, one could possibly argue that poorer people who cannot afford new or big cars will not be hurt as much (of course weight adjustment partly countervails this argument). On the other hand, one also could support poorer households by redistributing earnings from higher CO2 prices. Third, we actually see that quite tight fleet standards have been implemented in the EU while there is still no comprehensive EU-wide CO2 certificate trading in sight that also encompasses emissions from car fuels and heating systems. This suggests that it indeed was  politically easier to implement the tight fleet regulation, even though it seems less sensible than higher CO2 prices from an economic point of view.
+  
+### Special Adjustment in 2020 only: Ignore 5% worst cars
+
+There are some additional rules in the EU regulation, which I want to describe in the last 3 sections of this (quite long) blog post.
+
+In 2020 (but not anymore from 2021 onward) the EU fleet regulations allows pools to ignore the 5% cars with the highest CO2 emission when computing their fleet average. The following plot shows how this exemption reduces the average fees of the 8 largest pools. We also add the further reductions from the super credits for comparison.
+
+```{r}
+dat2018 = dat2018 %>%
+  group_by(pool8) %>%
+  arrange(co2) %>%
+  mutate(
+    Q_pool = sum(q),
+    q_cumsum = cumsum(q),
+    perc_start = (q_cumsum-q) / Q_pool,
+    perc_end =  q_cumsum / Q_pool,
+    q_95 = ifelse(perc_end <= 0.95,q,0)
+  ) %>%
+  mutate_rows(perc_start < 0.95 & perc_end > 0.95,
+    q_95 = q * (0.95 - perc_start)/(perc_end - perc_start) 
+  ) %>%
+  ungroup()
+
+
+df = dat2018 %>%
+  filter(pool8 != "Other") %>%
+  mutate(
+    q_95_sc = ifelse(co2 < 50, 2*q_95, q_95)
+  ) %>%
+  group_by(pool8) %>%
+  summarize(
+    co2_95 = weighted.mean(co2, q_95, na.rm=TRUE),
+    co2_95_sc = weighted.mean(co2, q_95_sc, na.rm=TRUE),
+    co2_100 = weighted.mean(co2, q, na.rm=TRUE),
+    excess_95 = co2_95-first(target_pool),
+    excess_95_sc = co2_95_sc-first(target_pool),
+    excess_100 = co2_100-first(target_pool)
+  ) %>%
+  mutate(
+    pool8 = fct_reorder(pool8, co2_100)
+  ) %>%
+  tidyr::pivot_longer(cols = c("excess_95","excess_95_sc", "excess_100"),
+    names_to = "scheme", values_to = "excess") %>%
+  mutate(fee = excess*95)
+
+ggplot(df,aes(pool8, fee, color=scheme))  +
+  geom_line(aes(group=pool8), color="black") +
+  geom_point(size=3) + coord_flip()
+
+```
+
+While the omission of the 5% worst cars helps to reduce fees, still all car companies would pay (substantial) positive fees with their 2018 fleet in 2020.
+
+### Small manufacturers
+
+The following code shows the 5 cars in our data set from 2018 with the highest CO2 emissions:
+
+```{r}
+# 5 entries with highest fees
+dat2018 %>%
+  arrange(-co2) %>%
+  slice(1:5) %>%
+  select(pool, firm,country, cn, mass, co2, excess_co2, fee)
+```
+
+
+The `Phantom VIII` on top is actually produced by Rolls-Royce and if it would not fall under the largest 5% or otherwise exempted would increase the CO2 fee by 39064 Euro in 2020. The Bugattis on rank 2-5 would correspond to similar high fees. Will these fees materialize from 2021 onwards when the 5% rule expires? That is not clear.
+
+Article 11 of the EU regulation allows manufacturers that sell less than 10000 new cars per year in the EU to apply for a derogation. This essentially means that they are exempt from the actual regulation but have to meet individual reduction targets based on historic CO2 efficiency.
+
+Also Rolls-Royce and Bugatti sell far less than 10000 cars a year in the EU. However, they are subsidiaries of BMW and VW, respectively, and the EU regulation allows for such small subsidiaries a derogation only if they operate their own production facilities and design centers. I could not find data for which manufacturers a derogation was granted and at which conditions.
+
+Let us look at a list of derogation candidates with high CO2 emission (above the pre 2020 target of 130 g CO2/km):
+```{r}
+dat = dat %>%
+  group_by(firm, year) %>%
+  mutate(
+    firm.q = sum(q, na.rm=TRUE),
+    firm.co2 = weighted.mean(co2,q, na.rm=TRUE),
+    dero.cand = firm.q < 10000 & firm.co2 > 130 | tolower(firm) == "other"
+  )
+
+dero.cand = dat %>%
+  group_by(pool,firm, year) %>%
+  filter(dero.cand) %>%
+  summarize(
+    co2 = weighted.mean(co2, q, na.rm=TRUE),
+    q = sum(q, na.rm=TRUE)
+  ) %>%
+  group_by(pool,firm) %>%
+  summarize(
+    co2 = weighted.mean(co2, q, na.rm=TRUE),
+    q = round(mean(q, na.rm=TRUE)),
+  ) %>%
+  arrange(-q)
+
+head(dero.cand, 10)
+
+# Mean number of maximal derogated CARS per year
+sum(dero.cand$q)
+# Percentage of average cars per year
+round(100*sum(dero.cand$q) / (sum(dat$q, na.rm=TRUE)/7),2)
+```
+
+So on average no more than 0.39 percent of newly registered cars should fall under a derogation. The following plot compares the average CO2 emissions if we remove all derogation candidates from the largest pools to the case that we don't.
+
+```{r}
+pool.dero.dat = dat %>%
+  filter(!dero.cand) %>%
+  group_by(pool8, year) %>%
+  summarize(
+    co2_pool = weighted.mean(co2, q,na.rm = TRUE),
+    mass_pool = weighted.mean(mass, q, na.rm=TRUE)
+  ) %>%
+  left_join(reg.df, by="year") %>%
+  mutate(
+    target_pool = target + a*(mass_pool-M0),
+    target2020_pool = 95 + 0.033*(mass_pool-1379.88)
+  )
+
+ggplot(pool.dat,aes(x=year,y=co2_pool)) + facet_wrap(~pool8) +
+  geom_line() + geom_point() +
+  geom_line(data=pool.dero.dat, color="blue")
+```
+
+It makes almost no visual difference (except a bit for FCA) whether these small subsidiaries that are derogation candidates are removed from the pools or not. Even removing these cars from the category `Other` does only matter marginally.
+
+### Eco innovations
+
+Car producers may make some Eco innovations that reduce CO2 emissions in a fashion that is not measured by the standardized test cycles. The following code shows for the 8 largest pool the CO2 reductions in g/km through such Eco innovations:
+
+```{r}
+dat2018 %>%
+  mutate_rows(!is.finite(reduction_nedc), reduction_nedc=0) %>%
+  group_by(pool8) %>%
+  summarize(eco_innovation = weighted.mean(reduction_nedc,q))
+```
+
+Even for the pool with largest Eco innovations (Daimler) the CO2 reductions are only a little bit less than 0.5 g CO2/km for the average and thus so far almost negligible.
