@@ -1,1 +1,1 @@
-Aggregated data (and code to create it) used in my [blog post](https://skranz.github.io/r/2019/12/17/EU_Cars_CO2.html) on exploring EU wide data on new car registrations and CO2 efficiency.
+Aggregated data (and code to create it) used in my blog posts [here](https://skranz.github.io/r/2019/12/17/EU_Cars_CO2.html) and [here](https://skranz.github.io/r/2020/01/14/eu_cars_co2_2.html) on exploring EU wide data on new car registrations and CO2 efficiency in conjunction with the EU car fleet CO2 regulation.
